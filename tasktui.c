@@ -7,9 +7,11 @@
 #include <sys/types.h>
 
 #define MAX_TASKS 200
-#define MAX_DESC 128
+#define MAX_TITLE 64
+#define MAX_DESC 256
 
 typedef struct {
+  char title[MAX_TITLE];
   char desc[MAX_DESC];
   int estimate; // in minutes
   bool done;
@@ -23,7 +25,7 @@ enum Filter current_filter = FILTER_ALL;
 
 char save_path[512];
 
-// ---------- persistence helpers ----------
+// ---------- persistence ----------
 void ensure_config_dir() {
   const char *home = getenv("HOME");
   if (!home)
@@ -43,8 +45,8 @@ void save_tasks() {
   if (!f)
     return;
   for (int i = 0; i < task_count; i++) {
-    fprintf(f, "%d|%d|%s\n", tasks[i].done ? 1 : 0, tasks[i].estimate,
-            tasks[i].desc);
+    fprintf(f, "%d|%d|%s|%s\n", tasks[i].done ? 1 : 0, tasks[i].estimate,
+            tasks[i].title, tasks[i].desc);
   }
   fclose(f);
 }
@@ -54,15 +56,18 @@ void load_tasks() {
   if (!f)
     return;
 
-  char line[256];
+  char line[1024];
   while (fgets(line, sizeof(line), f)) {
     if (task_count >= MAX_TASKS)
       break;
     int done, est;
-    char desc[MAX_DESC];
-    if (sscanf(line, "%d|%d|%[^\n]", &done, &est, desc) == 3) {
+    char title[MAX_TITLE], desc[MAX_DESC];
+    if (sscanf(line, "%d|%d|%63[^|]|%255[^\n]", &done, &est, title, desc) ==
+        4) {
       tasks[task_count].done = done;
       tasks[task_count].estimate = est;
+      strncpy(tasks[task_count].title, title, MAX_TITLE - 1);
+      tasks[task_count].title[MAX_TITLE - 1] = '\0';
       strncpy(tasks[task_count].desc, desc, MAX_DESC - 1);
       tasks[task_count].desc[MAX_DESC - 1] = '\0';
       task_count++;
@@ -85,21 +90,27 @@ bool filter_match(Task *t) {
 // ---------- UI ----------
 void draw_ui(int selected) {
   clear();
+  int mid = COLS / 2; // split screen into left (list) and right (desc)
+
   mvprintw(0, 0, "Simple Task TUI");
 
   int total = 0;
   int visible_index = 0;
+  int selected_real_index = -1;
+
   for (int i = 0; i < task_count; i++) {
     if (!filter_match(&tasks[i]))
       continue;
 
-    if (visible_index == selected)
+    if (visible_index == selected) {
       attron(A_REVERSE);
+      selected_real_index = i;
+    }
 
     if (tasks[i].done)
       attron(COLOR_PAIR(1));
-    mvprintw(visible_index + 2, 2, "%d. %-40s [%d min] %s", i + 1,
-             tasks[i].desc, tasks[i].estimate, tasks[i].done ? "(done)" : "");
+    mvprintw(visible_index + 2, 2, "%d. %-20s [%d min] %s", i + 1,
+             tasks[i].title, tasks[i].estimate, tasks[i].done ? "(done)" : "");
     if (tasks[i].done)
       attroff(COLOR_PAIR(1));
 
@@ -111,6 +122,7 @@ void draw_ui(int selected) {
     visible_index++;
   }
 
+  // Footer
   mvprintw(LINES - 3, 0, "Total remaining estimate: %d min (%.2f h)", total,
            total / 60.0);
   const char *fstr = (current_filter == FILTER_ALL      ? "All"
@@ -121,14 +133,41 @@ void draw_ui(int selected) {
   mvprintw(
       LINES - 1, 0,
       "Keys: a=add  e=edit  x=toggle  d=delete  j/k=move  /=filter  q=quit");
+
+  // Right side: description of selected task
+  if (selected_real_index >= 0) {
+    int y = 2;
+    mvprintw(y++, mid + 2, "Title: %s", tasks[selected_real_index].title);
+    mvprintw(y++, mid + 2, "Estimate: %d min",
+             tasks[selected_real_index].estimate);
+    mvprintw(y++, mid + 2, "Status: %s",
+             tasks[selected_real_index].done ? "Done" : "Undone");
+    mvprintw(y++, mid + 2, "Description:");
+    y++;
+    char *desc = tasks[selected_real_index].desc;
+    int len = strlen(desc);
+    int width = COLS - (mid + 4);
+    for (int i = 0; i < len; i += width) {
+      char buf[512];
+      strncpy(buf, desc + i, width);
+      buf[width] = '\0';
+      mvprintw(y++, mid + 2, "%s", buf);
+    }
+  }
+
   refresh();
 }
 
 // ---------- core ops ----------
 void add_task() {
   echo();
+  char title[MAX_TITLE];
   char desc[MAX_DESC];
   int est;
+
+  mvprintw(LINES - 6, 0, "Task title: ");
+  clrtoeol();
+  getnstr(title, MAX_TITLE - 1);
 
   mvprintw(LINES - 5, 0, "Task description: ");
   clrtoeol();
@@ -141,6 +180,8 @@ void add_task() {
   noecho();
 
   if (task_count < MAX_TASKS) {
+    strncpy(tasks[task_count].title, title, MAX_TITLE - 1);
+    tasks[task_count].title[MAX_TITLE - 1] = '\0';
     strncpy(tasks[task_count].desc, desc, MAX_DESC - 1);
     tasks[task_count].desc[MAX_DESC - 1] = '\0';
     tasks[task_count].estimate = est;
@@ -160,8 +201,13 @@ void edit_task(int idx) {
       continue;
     if (visible_index == idx) {
       echo();
+      char title[MAX_TITLE];
       char desc[MAX_DESC];
       char est_str[32];
+
+      mvprintw(LINES - 7, 0, "Edit title (current: %s): ", tasks[i].title);
+      clrtoeol();
+      getnstr(title, MAX_TITLE - 1);
 
       mvprintw(LINES - 6, 0, "Edit description (current: %s): ", tasks[i].desc);
       clrtoeol();
@@ -174,6 +220,10 @@ void edit_task(int idx) {
 
       noecho();
 
+      if (strlen(title) > 0) {
+        strncpy(tasks[i].title, title, MAX_TITLE - 1);
+        tasks[i].title[MAX_TITLE - 1] = '\0';
+      }
       if (strlen(desc) > 0) {
         strncpy(tasks[i].desc, desc, MAX_DESC - 1);
         tasks[i].desc[MAX_DESC - 1] = '\0';
