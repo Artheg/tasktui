@@ -173,9 +173,15 @@ void add_task() {
   clrtoeol();
   getnstr(desc, MAX_DESC - 1);
 
-  mvprintw(LINES - 4, 0, "Estimate (minutes): ");
+  mvprintw(LINES - 4, 0, "Estimate (minutes, empty=0): ");
   clrtoeol();
-  scanw("%d", &est);
+  char est_str[32];
+  getnstr(est_str, sizeof(est_str) - 1);
+  if (strlen(est_str) == 0) {
+    est = 0;
+  } else {
+    est = atoi(est_str);
+  }
 
   noecho();
 
@@ -250,6 +256,16 @@ void delete_task(int idx) {
     if (!filter_match(&tasks[i]))
       continue;
     if (visible_index == idx) {
+      // Confirmation prompt
+      echo();
+      mvprintw(LINES - 2, 0, "Delete task '%s'? (y/n): ", tasks[i].title);
+      clrtoeol();
+      int c = getch();
+      noecho();
+      if (c != 'y' && c != 'Y')
+        return;
+
+      // Shift tasks down
       for (int j = i; j < task_count - 1; j++) {
         tasks[j] = tasks[j + 1];
       }
