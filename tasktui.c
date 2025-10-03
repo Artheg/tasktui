@@ -1,3 +1,4 @@
+#include <ctype.h>
 #include <ncurses.h>
 #include <stdbool.h>
 #include <stdio.h>
@@ -197,6 +198,48 @@ void add_task() {
   save_tasks();
 }
 
+void edit_line(int y, int x, char *buffer, int maxlen) {
+  int pos = strlen(buffer);
+  int ch;
+
+  move(y, x);
+  addstr(buffer);
+  move(y, x + pos);
+  curs_set(1);
+
+  keypad(stdscr, TRUE);
+
+  while ((ch = getch()) != '\n') {
+    if (ch == KEY_BACKSPACE || ch == 127) {
+      if (pos > 0) {
+        pos--;
+        buffer[pos] = '\0';
+        move(y, x);
+        clrtoeol();
+        addstr(buffer);
+        move(y, x + pos);
+      }
+    } else if (isprint(ch) && pos < maxlen - 1) {
+      memmove(buffer + pos + 1, buffer + pos, strlen(buffer) - pos + 1);
+      buffer[pos] = ch;
+      pos++;
+      move(y, x);
+      clrtoeol();
+      addstr(buffer);
+      move(y, x + pos);
+    } else if (ch == KEY_LEFT) {
+      if (pos > 0)
+        pos--;
+      move(y, x + pos);
+    } else if (ch == KEY_RIGHT) {
+      if (pos < strlen(buffer))
+        pos++;
+      move(y, x + pos);
+    }
+  }
+  curs_set(0);
+}
+
 void edit_task(int idx) {
   if (idx < 0)
     return;
@@ -207,39 +250,33 @@ void edit_task(int idx) {
       continue;
     if (visible_index == idx) {
       echo();
-      char title[MAX_TITLE];
-      char desc[MAX_DESC];
+
+      // Title
+      mvprintw(LINES - 7, 0, "Edit title: ");
+      clrtoeol();
+      edit_line(LINES - 6, 0, tasks[i].title, MAX_TITLE);
+
+      // Description
+      mvprintw(LINES - 5, 0, "Edit description: ");
+      clrtoeol();
+      edit_line(LINES - 4, 0, tasks[i].desc, MAX_DESC);
+
+      // Estimate
       char est_str[32];
-
-      mvprintw(LINES - 7, 0, "Edit title (current: %s): ", tasks[i].title);
+      snprintf(est_str, sizeof(est_str), "%d", tasks[i].estimate);
+      mvprintw(LINES - 3, 0, "Edit estimate (minutes, empty=0): ");
       clrtoeol();
-      getnstr(title, MAX_TITLE - 1);
+      edit_line(LINES - 2, 0, est_str, sizeof(est_str) - 1);
 
-      mvprintw(LINES - 6, 0, "Edit description (current: %s): ", tasks[i].desc);
-      clrtoeol();
-      getnstr(desc, MAX_DESC - 1);
-
-      mvprintw(LINES - 5, 0,
-               "Edit estimate (minutes, current: %d): ", tasks[i].estimate);
-      clrtoeol();
-      getnstr(est_str, sizeof(est_str) - 1);
-
-      noecho();
-
-      if (strlen(title) > 0) {
-        strncpy(tasks[i].title, title, MAX_TITLE - 1);
-        tasks[i].title[MAX_TITLE - 1] = '\0';
-      }
-      if (strlen(desc) > 0) {
-        strncpy(tasks[i].desc, desc, MAX_DESC - 1);
-        tasks[i].desc[MAX_DESC - 1] = '\0';
-      }
-      if (strlen(est_str) > 0) {
+      if (strlen(est_str) == 0) {
+        tasks[i].estimate = 0;
+      } else {
         int new_est = atoi(est_str);
-        if (new_est > 0)
+        if (new_est >= 0)
           tasks[i].estimate = new_est;
       }
 
+      noecho();
       save_tasks();
       return;
     }
